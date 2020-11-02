@@ -1,0 +1,274 @@
+---
+title: "The overall popular vote of the 2020 American federal election"
+author: "Yuting Ge，Ying Cao, Yifu Guo, Yuxin Du"
+date: "Nov 2, 2020"
+output:
+  pdf_document: 
+    df_print: paged
+    fig_caption: yes
+    number_sections: true
+  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message =FALSE, warning =FALSE)
+
+pacman::p_load(usmap,ggplot2, tidyverse, stargazer)
+
+
+# Loading in the cleaned survey Data
+survey_data <- read.csv("outputs/survey_data.csv")
+
+
+# Loading in the cleaned census Data
+census_data <- read.csv("outputs/census_data.csv")
+
+census_data <- census_data %>% rename(gender = sex)%>%
+  mutate(gender = ifelse(gender=='female', "Female", "Male"))
+
+```
+
+# 2020 Election Forecast: Will Donald Trump Win Again?
+
+## Yuting Ge，Ying Cao, Yifu Guo, Yuxin Du
+## Oct 30, 2020
+
+This analysis is done in R. 
+
+# Model
+
+Here we are interested in predicting the popular vote outcome of the 2020 American federal election (include citation). To do this we are employing a post-stratification technique. Descriptions of the model specifics and the post-stratification calculation will be given in the following sub-sections.
+
+
+## Model Specifics
+
+We will be using a random intercept logistic regression model (generalized linear mixed model) to model the probability of voting for Donald Trump. This will be an additive model accounting for state, age, gender, race and education, where all the explanatory variables are categorical, and thus will be coded as indicator variables in modeling. Speficically, the variable *age* is categorized into five groups: 1-20, 21-40, 41-60, 61-80 and 80+. The variable *race* is categorized into two levels: White or Other. The variable *degree* regarding education is created based on the educational description and contains two levels: have a degree = Yes or No. The variable *state* has 51 levels and is treated as a random effect. Data manipulation including categorization described above were done in the separate R scripts.
+
+There are two main reasons why I choose this set of predictors. First, they are meaningful and intuitive. Second, they can be well defined and consistent in both the survey data and census data. Considering the fact that variable *state* has a large number of levels yet heterogeneity is expected, we accounte for it as a random effect in our model. Furthermore, including interations introduced rank deficiency problems in modeling and caused convergence issues. Therefore, after running several models of possible combinations, I pick the one that minimizes the AIC without convergence issues. The random intercept logistic regression model I am using is:
+
+$$ y = \beta_{0,state_j}+\beta_1  I_{age=21:40} +
+\beta_2  I_{age=41:60} +
+\beta_3  I_{age=61:80} +
+\beta_4  I_{age=80+} 
+$$
+$$
+ +\beta_5  I_{gender=Male} + 
+\beta_6  I_{race=White} +
+\beta_7  I_{degree=Yes} + \epsilon$$
+
+
+Where $y$ represents the proportion of voters who will vote for Donald Trump. Similarly, the random intercept $\beta_0$ represents the intercept of the model for state j, where j={1,..., 51}, and is the probability of voting for Donald Trump at the combination of baseline categories of the fixed effects (i.e., age group=1-20, gender=Female, race=Other, have a degree=No). Additionally, $\beta_1$ to $\beta_{7}$ represent the difference between the baseline category and the  indicated category. For example, for a white male aged 21-40 from state j who holds a degree,  we expect a $\beta_1 + \beta_5 + \beta_6 + \beta_7$ increase in the probability of him voting for Donald Trump.
+
+```{r, include=FALSE}
+
+# Creating the Model
+model <- lme4::glmer(vote_trump ~ (1|state) +age_group +gender +race_class * degree_class, 
+            data=survey_data, family =binomial)
+
+# Model Results (to Report in Results section)
+# summary(model)
+# OR
+# broom::tidy(model)
+
+```
+
+## Post-Stratification 
+
+In order to estimate the proportion of voters who will vote for Donald Trump, we perform a post-stratification analysis. We create all possible combinations of state, age group, gender, race and education. On the other hand, using the generalized linear mixed model fitted with the survey data, we estimate the proportion of votes for Trump in each combination. 
+
+There are two types of estimates calculated in this analysis: one is within-state and the other one is across-state (overall).
+We weight each model estimated proportion of votes by the respective population size of that combination, and sum those values and divide that by the full census size (the total of a state or the total census population). 
+
+```{r, include=TRUE}
+
+# Here I will perform the post-stratification calculation
+census_data$logodds_estimate <-
+  model %>%
+  predict(newdata = census_data) 
+
+census_data$estimate <-
+  exp(census_data$logodds_estimate)/(1+exp(census_data$logodds_estimate))
+
+census_data1 <- census_data %>%
+  
+  mutate(alp_predict_prop = estimate*n)%>%
+  group_by(state) %>% 
+  summarise(sum_N = sum(n),
+         sum_prop = sum(alp_predict_prop),
+         ps_predict = sum_prop/sum_N)
+
+ps_overall = sum(census_data1$sum_prop)/sum(census_data1$sum_N)
+
+```
+
+
+# Results
+
+
+Based on the modelled results, we predict that Donald Trump will not win the 2020 election. The model predictions for Donald Trump's popularity per state vary from `r min(census_data1$ps_predict)` to `r max(census_data1$ps_predict)` with a 95% interval as (`r quantile(census_data1$ps_predict,0.025)`, `r quantile(census_data1$ps_predict,0.975)`), which suggest that he may win only zero to few states.
+Moreover, the overall estimated voting percentage for Trump regardless of state is `r ps_overall`, which is also quite far away from 50% and indicates a good chance of failure. 
+
+
+Model summary is as follows:
+
+```{r,echo = FALSE}
+
+summary(model) 
+
+```
+
+
+
+# Discussion
+
+For the purpose of predicting the 2020 election outcome, this study first applies the random intercept logistic regression model to the nationwide survey data to estimate Trump's popularity within each defined group, and then uses the post-stratification strategy to find the per state and overall population proportion estimates of Trump's votes employing the 2018 U.S census data. None of the state and overall population estimates is over 50\%, which predicts Donald Trump will not win.  
+
+The results suggesting Trump will fail are not surprising, as the voting proportions are relatively low (<50\%) in most of the cases in the survey data, which are what the model estimates based on. The following graphs (Figure 1 - Figure 5) visualize the association between the popularity of Trump and each selected predictor separately and provide a sense of the Trump's vote proportions in the survey:
+
+
+```{r,echo = FALSE,fig.cap="\\label{fig:figs}Donald Trump's Popularity by State"}
+
+survey_data %>% group_by(state, age_group, gender, race_class, degree_class) %>% 
+  summarise(sum_0 = sum(vote_trump==0, na.rm = TRUE),
+          sum_1 = sum(vote_trump==1, na.rm = TRUE),
+          percent = sum_1/(sum_0 + sum_1)) -> state_percent
+
+
+plot_usmap(data=state_percent, values = 'percent',
+           regions = "states") +
+  labs(title = "Votes by US States",
+       subtitle = "This is a blank map of the counties of the United States.") +
+  scale_fill_continuous(low = "white", high = "darkblue", name = "Survey Popularity (2020)") +
+  theme(legend.position = "right") +
+  theme(panel.background = element_rect(color = "black", fill = "lightblue"))
+
+```
+
+
+```{r,echo = FALSE,fig.height=3.5,fig.cap="\\label{fig:figs}Donald Trump's Popularity VS. Surveyee Age"}
+
+survey_data %>% group_by(age) %>%
+  summarise(sum_0 = sum(vote_trump==0, na.rm = TRUE),
+          sum_1 = sum(vote_trump==1, na.rm = TRUE),
+          percent = sum_1/(sum_0 + sum_1)) %>% ggplot(aes(x=age, y=percent)) + geom_point()
+
+
+```
+
+```{r,echo = FALSE,fig.height=3.5,fig.cap="\\label{fig:figs}Donald Trump's Popularity VS. Surveyee Gender"}
+
+survey_data %>% group_by(gender) %>%
+  summarise(sum_0 = sum(vote_trump==0, na.rm = TRUE),
+          sum_1 = sum(vote_trump==1, na.rm = TRUE),
+          vote_percentage = sum_1/(sum_0 + sum_1)) %>% 
+  ggplot(aes(x=gender, y=vote_percentage)) + 
+  geom_bar( stat="identity", width = .5) +
+   geom_text( aes(label=paste0(round(vote_percentage*100,1),"%"),
+                               y=vote_percentage+0.012), size=4) + 
+  theme_bw()
+```
+
+
+```{r,echo = FALSE,fig.height=3.5,fig.cap="\\label{fig:figs}Donald Trump's Popularity VS. Surveyee Race"}
+
+survey_data %>% group_by(race_class) %>%
+  summarise(sum_0 = sum(vote_trump==0, na.rm = TRUE),
+          sum_1 = sum(vote_trump==1, na.rm = TRUE),
+          vote_percentage = sum_1/(sum_0 + sum_1)) %>% 
+  ggplot(aes(x=race_class, y=vote_percentage)) + 
+  geom_bar( stat="identity", width = .5) +
+   geom_text( aes(label=paste0(round(vote_percentage*100,1),"%"),
+                               y=vote_percentage+0.012), size=4) + 
+  theme_bw()
+```
+
+```{r,echo = FALSE,fig.height=3.5,fig.cap="\\label{fig:figs}Donald Trump's Popularity VS. Surveyee Education"}
+
+survey_data %>% group_by(degree_class) %>%
+  summarise(sum_0 = sum(vote_trump==0, na.rm = TRUE),
+          sum_1 = sum(vote_trump==1, na.rm = TRUE),
+          vote_percentage = sum_1/(sum_0 + sum_1)) %>% 
+  ggplot(aes(x=degree_class, y=vote_percentage)) + 
+  xlab("Have a degree") +
+  geom_bar( stat="identity", width = .5) +
+   geom_text( aes(label=paste0(round(vote_percentage*100,1),"%"),
+                               y=vote_percentage+0.012), size=4) + 
+  theme_bw()
+```
+
+
+
+## Weaknesses
+
+A drawback of this study is that the variable selection process is not exhausitive. In other words, there are a lot of variables unexplored, which could affect the model performance. Computational power and time input are both too tight. 
+
+In addition, the interaction terms are not included in the final model due to the limited survey sample size and the large number of state levels. However, evidence can be seen from the exploratory plots that the interactions between the selected predictors are likely to be important (see Appendix).   
+
+Another interesting question is the definition of our outcome variable. In this study, we simply classify the voting outcome as vote for Trump or not, where the uncertain responses (e.g., "I don't know/ I am not sure") also fall into the "not vote for Trump" group. However, in reality this group of people that do not favor in Trump or Biden may have key impact on the election outcome.   
+
+
+## Next Steps
+
+First of all, in terms of the model selection, I would like to try some non-linear methods, such as machine learning methods for next steps. For example, tree-based models like Random Forest can provide variable importance, which will be able to help with the variable selection process as well. 
+
+Second of all, I will apply different stratification plans for calculating the final estimations. These various plans may involve employing another set of survey data or selecting another group of variables of interest. Meanwhile, a little exploration in the sampled individuals who did not have a preference may help us better understand the data and design our study. Last but not least, I will compare the modelled results and see how consistent the predictions are with different approaches. 
+
+
+
+
+# References
+
+1. Paolo Di Lorenzo (2020). usmap: US Maps Including Alaska and
+  Hawaii. R package version 0.5.1.
+  https://CRAN.R-project.org/package=usmap.
+
+```{r,echo = FALSE}
+
+#citation(package = "usmap")
+
+```
+
+# Appendix
+
+This section includes some graphs generated for data exploration.
+
+```{r, echo = FALSE, fig.height=3.5, fig.cap="\\label{fig:figs}Donald Trump's Popularity per State by Age Group"}
+
+plot_usmap(data=state_percent, values = 'percent',
+           regions = "states") +
+  facet_wrap(~age_group) +
+  labs(title = "Votes per State by Age Group") +
+  scale_fill_continuous(low = "white", high = "darkblue", name = "Survey Popularity (2020)") +
+  theme(legend.position = "right") +
+  theme(panel.background = element_rect(color = "black", fill = "lightblue"))
+```
+
+```{r echo = FALSE, fig.height=3.5,fig.cap="\\label{fig:figs}Donald Trump's Popularity per State by Gender"}
+plot_usmap(data=state_percent, values = 'percent',
+           regions = "states") +
+  facet_wrap(~gender) +
+  labs(title = "Votes per State by Gender") +
+  scale_fill_continuous(low = "white", high = "darkblue", name = "Survey Popularity (2020)") +
+  theme(legend.position = "right") +
+  theme(panel.background = element_rect(color = "black", fill = "lightblue"))
+```
+
+```{r echo = FALSE, fig.height=3.5,fig.cap="\\label{fig:figs}Donald Trump's Popularity per State by Race"}
+plot_usmap(data=state_percent, values = 'percent',
+           regions = "states") +
+  facet_wrap(~race_class) +
+  labs(title = "Votes per State by Race") +
+  scale_fill_continuous(low = "white", high = "darkblue", name = "Survey Popularity (2020)") +
+  theme(legend.position = "right") +
+  theme(panel.background = element_rect(color = "black", fill = "lightblue"))
+```
+
+```{r echo = FALSE, fig.height=3.5,fig.cap="\\label{fig:figs}Donald Trump's Popularity per State by Degree"}
+plot_usmap(data=state_percent, values = 'percent',
+           regions = "states") +
+  facet_wrap(~degree_class) +
+  labs(title = "Votes per State by Degree") +
+  scale_fill_continuous(low = "white", high = "darkblue", name = "Survey Popularity (2020)") +
+  theme(legend.position = "right") +
+  theme(panel.background = element_rect(color = "black", fill = "lightblue"))
+```
